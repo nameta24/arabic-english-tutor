@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arabic English Spoken Tutor</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@1.15.6/dist/livekit-client.umd.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f4f9;
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .controls {
+            width: 25%;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            overflow-y: auto;
+            height: 100%;
+            box-sizing: border-box;
+        }
+        .video-container {
+            width: 85%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            background: #000; /* Black background for better video contrast */
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;  /* Ensures avatar fits without cropping */
+            display: block;
+        }
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+        }
+        p {
+            font-size: 1rem;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px 0;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            width: 100%;
+            font-size: 1rem;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        input {
+            padding: 10px;
+            width: 100%;
+            margin: 5px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        #status {
+            color: #ffcc00;
+            margin: 10px 0;
+            font-weight: bold;
+            font-size: 1rem;
+        }
+        @media (max-width: 800px) {
+            body {
+                flex-direction: column;
+            }
+            .controls {
+                width: 100%;
+                height: auto;
+                padding: 10px;
+            }
+            .video-container {
+                width: 100%;
+                height: 60vh;
+            }
+            video {
+                height: 60vh;
+            }
+            h1 {
+                font-size: 1.4rem;
+            }
+            p {
+                font-size: 0.9rem;
+            }
+            button {
+                padding: 8px 16px;
+                font-size: 0.9rem;
+            }
+            input {
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <h1>Interactive English Tutor (Arabic Interaction)</h1>
+        <p>Speak in Arabic to learn spoken English (e.g., phrases, pronunciation).</p>
+        <button id="startBtn">Start Session</button>
+        <button id="closeBtn" disabled>Close Session</button>
+        <button id="micBtn" disabled>Start Voice Input</button>
+        <input id="taskInput" type="text" placeholder="Type in Arabic (optional)" />
+        <button id="talkBtn" disabled>Send Text</button>
+        <div id="status"></div>
+    </div>
+    <div class="video-container">
+        <video id="mediaElement" autoplay playsinline></video>
+    </div>
+
+    <script>
+        const API_CONFIG = {
+            token: "NjBmOWFlNTliMTc3NDIzZTg4Y2Q1NmIzZDIwYWYzN2ItMTczNjQ5NTY1OA=="
+        };
+
+        let sessionId = null;
+        let room = null;
+        let mediaStream = new MediaStream();
+        let localAudioTrack = null;
+        let recognition = null;
+        let micEnabled = false;
+        const mediaElement = document.getElementById("mediaElement");
+        const taskInput = document.getElementById("taskInput");
+        const startBtn = document.getElementById("startBtn");
+        const closeBtn = document.getElementById("closeBtn");
+        const micBtn = document.getElementById("micBtn");
+        const talkBtn = document.getElementById("talkBtn");
+        const statusDiv = document.getElementById("status");
+
+        async function proxyPost(url, body) {
+            try {
+                const response = await fetch('/proxy', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: url,
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${API_CONFIG.token}`
+                        },
+                        body: body
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error(`Proxy failed: ${response.statusText} (${response.status})`);
+                }
+                return response.json();
+            } catch (error) {
+                console.error("Proxy error:", error);
+                throw error;
+            }
+        }
+
+        async function createSession() {
+            statusDiv.textContent = "Starting session...";
+            startBtn.disabled = true;
+            try {
+                console.log("Creating session...");
+                const sessionData = await proxyPost('https://api.heygen.com/v1/streaming.new', {
+                    version: "v2",
+                    avatar_id: "Alessandra_Chair_Sitting_public",
+                    knowledge_base: "أنت مدرس لغة إنجليزية محادثة. تتفاعل باللغة العربية فقط. علم الطالب كيفية التحدث بالإنجليزية من خلال شرح العبارات، النطق، والمحادثات بالعربية. اجعل الدروس تفاعلية وبسيطة. مثال: إذا سأل الطالب 'كيف أقول مرحبا؟'، اشرح أن الكلمة هي 'Hello'، وانطقها 'هيلو'، ثم اطلب منه التكرار. لا تعرف نفسك في كل رد، فقط عند بداية المحادثة.",
+                    quality: "medium",
+                    stt_settings: {
+                        provider: "assembly_ai",
+                        language: "ar"
+                    },
+                    disable_idle_timeout: false
+                });
+                sessionId = sessionData.data.session_id;
+                console.log("Session ID:", sessionId);
+
+                await proxyPost('https://api.heygen.com/v1/streaming.start', {
+                    session_id: sessionId
+                });
+                console.log("Session started");
+
+                room = new LivekitClient.Room();
+                await room.connect(sessionData.data.url, sessionData.data.access_token);
+                console.log("Connected to room");
+
+                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+                    console.log("Track subscribed:", track.kind);
+                    mediaStream.addTrack(track.mediaStreamTrack);
+                    mediaElement.srcObject = mediaStream;
+                    mediaElement.play().catch(err => console.error("Play error:", err));
+                    statusDiv.textContent = "Session active! Speak or type in Arabic.";
+                });
+
+                // Create and publish audio track after session is ready
+                localAudioTrack = await LivekitClient.createLocalAudioTrack();
+                await room.localParticipant.publishTrack(localAudioTrack);
+                console.log("Microphone enabled");
+
+                closeBtn.disabled = false;
+                micBtn.disabled = false;
+                talkBtn.disabled = false;
+                statusDiv.textContent = "Session active! Speak or type in Arabic.";
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                console.error("Session creation failed:", error);
+                startBtn.disabled = false;
+            }
+        }
+
+        function toggleVoiceInput() {
+            if (!micEnabled) {
+                micEnabled = true;
+                micBtn.textContent = "Stop Voice Input";
+                statusDiv.textContent = "Listening for Arabic voice...";
+                if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    statusDiv.textContent = "Error: Speech Recognition not supported in this browser.";
+                    console.error("Speech Recognition not supported");
+                    micBtn.textContent = "Start Voice Input";
+                    micEnabled = false;
+                    return;
+                }
+                recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
+                recognition.lang = "ar-SA"; // Arabic Saudi Arabia
+                recognition.continuous = true;
+                recognition.interimResults = true;
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[event.results.length - 1][0].transcript;
+                    taskInput.value = transcript;
+                    if (event.results[event.results.length - 1].isFinal) {
+                        sendText();
+                    }
+                    console.log("Recognized:", transcript);
+                };
+
+                recognition.onerror = (event) => {
+                    statusDiv.textContent = `Voice recognition error: ${event.error}`;
+                    console.error("Voice recognition error:", event.error);
+                    toggleVoiceInput();
+                };
+
+                recognition.onend = () => {
+                    if (micEnabled) {
+                        recognition.start(); // Restart if still enabled
+                    }
+                };
+
+                recognition.start();
+                console.log("Voice recognition started");
+            } else {
+                micEnabled = false;
+                micBtn.textContent = "Start Voice Input";
+                statusDiv.textContent = "Voice input stopped.";
+                if (recognition) {
+                    recognition.stop();
+                }
+                console.log("Voice recognition stopped");
+            }
+        }
+
+        async function sendText() {
+            const text = taskInput.value.trim();
+            if (!text || !sessionId) {
+                statusDiv.textContent = "Error: No session or empty input";
+                return;
+            }
+
+            try {
+                await proxyPost('https://api.heygen.com/v1/streaming.task', {
+                    session_id: sessionId,
+                    text: text,
+                    task_type: "talk"
+                });
+                taskInput.value = "";
+                statusDiv.textContent = "Text sent! Awaiting response...";
+                console.log("Text task sent");
+            } catch (error) {
+                statusDiv.textContent = `Error sending text: ${error.message}`;
+                console.error("Text send failed:", error);
+            }
+        }
+
+        async function closeSession() {
+            try {
+                if (sessionId) {
+                    await proxyPost('https://api.heygen.com/v1/streaming.stop', {
+                        session_id: sessionId
+                    });
+                }
+
+                if (room) {
+                    if (localAudioTrack) {
+                        await room.localParticipant.unpublishTrack(localAudioTrack);
+                    }
+                    room.disconnect();
+                }
+
+                if (localAudioTrack) {
+                    localAudioTrack.stop();
+                }
+
+                if (recognition && micEnabled) {
+                    recognition.stop();
+                }
+
+                mediaElement.srcObject = null;
+                sessionId = null;
+                room = null;
+                mediaStream = new MediaStream();
+                startBtn.disabled = false;
+                closeBtn.disabled = true;
+                micBtn.disabled = true;
+                talkBtn.disabled = true;
+                micBtn.textContent = "Start Voice Input";
+                micEnabled = false;
+                statusDiv.textContent = "Session closed.";
+                console.log("Session closed");
+            } catch (error) {
+                statusDiv.textContent = `Error closing session: ${error.message}`;
+                console.error("Session close failed:", error);
+            }
+        }
+
+        startBtn.addEventListener("click", createSession);
+        closeBtn.addEventListener("click", closeSession);
+        micBtn.addEventListener("click", toggleVoiceInput);
+        talkBtn.addEventListener("click", sendText);
+    </script>
+</body>
+</html>
