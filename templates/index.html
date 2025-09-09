@@ -34,12 +34,12 @@
             justify-content: center;
             align-items: center;
             overflow: hidden;
-            background: #000; /* Black background for better video contrast */
+            background: #000;
         }
         video {
             width: 100%;
             height: 100%;
-            object-fit: contain;  /* Ensures avatar fits without cropping */
+            object-fit: contain;
             display: block;
         }
         h1 {
@@ -129,7 +129,7 @@
 
     <script>
         const API_CONFIG = {
-            token: "NjBmOWFlNTliMTc3NDIzZTg4Y2Q1NmIzZDIwYWYzN2ItMTczNjQ5NTY1OA=="
+            token: "ZWU1MWZhODk4NzA4NGYzYjkwNjBhMTUyNmM4Y2JkNzMtMTc1NzQxMjMyMA=="
         };
 
         let sessionId = null;
@@ -172,15 +172,34 @@
             }
         }
 
+        // Tutor Intro & Practice
+        async function tutorIntroduction() {
+            try {
+                await proxyPost('https://api.heygen.com/v1/streaming.task', {
+                    session_id: sessionId,
+                    text: "Hello! I am your English language tutor. I will help you practice English while explaining in Arabic so you understand clearly. Together we will learn step by step, and I will correct you if you make a mistake.",
+                    task_type: "talk"
+                });
+
+                await proxyPost('https://api.heygen.com/v1/streaming.task', {
+                    session_id: sessionId,
+                    text: "Let's start practicing. Repeat after me: How are you?",
+                    task_type: "talk"
+                });
+            } catch (error) {
+                console.error("Intro failed:", error);
+                statusDiv.textContent = "Error sending introduction.";
+            }
+        }
+
         async function createSession() {
             statusDiv.textContent = "Starting session...";
             startBtn.disabled = true;
             try {
-                console.log("Creating session...");
                 const sessionData = await proxyPost('https://api.heygen.com/v1/streaming.new', {
                     version: "v2",
                     avatar_id: "Alessandra_CasualLook_public",
-                    knowledge_base: "أنت مدرس لغة إنجليزية محادثة. تتفاعل باللغة العربية فقط. علم الطالب كيفية التحدث بالإنجليزية من خلال شرح العبارات، النطق، والمحادثات بالعربية. اجعل الدروس تفاعلية وبسيطة. مثال: إذا سأل الطالب 'كيف أقول مرحبا؟'، اشرح أن الكلمة هي 'Hello'، وانطقها 'هيلو'، ثم اطلب منه التكرار. لا تعرف نفسك في كل رد، فقط عند بداية المحادثة.",
+                    knowledge_base: "أنت مدرس لغة إنجليزية محادثة. تتفاعل باللغة العربية فقط. علم الطالب كيفية التحدث بالإنجليزية من خلال شرح العبارات، النطق، والمحادثات بالعربية. اجعل الدروس تفاعلية وبسيطة.",
                     quality: "medium",
                     stt_settings: {
                         provider: "assembly_ai",
@@ -189,29 +208,26 @@
                     disable_idle_timeout: false
                 });
                 sessionId = sessionData.data.session_id;
-                console.log("Session ID:", sessionId);
 
                 await proxyPost('https://api.heygen.com/v1/streaming.start', {
                     session_id: sessionId
                 });
-                console.log("Session started");
+
+                // Call Tutor Intro
+                tutorIntroduction();
 
                 room = new LivekitClient.Room();
                 await room.connect(sessionData.data.url, sessionData.data.access_token);
-                console.log("Connected to room");
 
                 room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-                    console.log("Track subscribed:", track.kind);
                     mediaStream.addTrack(track.mediaStreamTrack);
                     mediaElement.srcObject = mediaStream;
                     mediaElement.play().catch(err => console.error("Play error:", err));
                     statusDiv.textContent = "Session active! Speak or type in Arabic.";
                 });
 
-                // Create and publish audio track after session is ready
                 localAudioTrack = await LivekitClient.createLocalAudioTrack();
                 await room.localParticipant.publishTrack(localAudioTrack);
-                console.log("Microphone enabled");
 
                 closeBtn.disabled = false;
                 micBtn.disabled = false;
@@ -219,7 +235,6 @@
                 statusDiv.textContent = "Session active! Speak or type in Arabic.";
             } catch (error) {
                 statusDiv.textContent = `Error: ${error.message}`;
-                console.error("Session creation failed:", error);
                 startBtn.disabled = false;
             }
         }
@@ -231,47 +246,54 @@
                 statusDiv.textContent = "Listening for Arabic voice...";
                 if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                     statusDiv.textContent = "Error: Speech Recognition not supported in this browser.";
-                    console.error("Speech Recognition not supported");
                     micBtn.textContent = "Start Voice Input";
                     micEnabled = false;
                     return;
                 }
                 recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
-                recognition.lang = "ar-SA"; // Arabic Saudi Arabia
+                recognition.lang = "ar-SA";
                 recognition.continuous = true;
                 recognition.interimResults = true;
 
                 recognition.onresult = (event) => {
-                    const transcript = event.results[event.results.length - 1][0].transcript;
+                    const transcript = event.results[event.results.length - 1][0].transcript.trim();
                     taskInput.value = transcript;
+
                     if (event.results[event.results.length - 1].isFinal) {
-                        sendText();
+                        console.log("Recognized:", transcript);
+
+                        // Correction logic
+                        if (transcript.toLowerCase() !== "how are you") {
+                            proxyPost('https://api.heygen.com/v1/streaming.task', {
+                                session_id: sessionId,
+                                text: "Not quite correct. Please try again: How are you?",
+                                task_type: "talk"
+                            });
+                        } else {
+                            proxyPost('https://api.heygen.com/v1/streaming.task', {
+                                session_id: sessionId,
+                                text: "Perfect! You said it correctly.",
+                                task_type: "talk"
+                            });
+                        }
                     }
-                    console.log("Recognized:", transcript);
                 };
 
                 recognition.onerror = (event) => {
                     statusDiv.textContent = `Voice recognition error: ${event.error}`;
-                    console.error("Voice recognition error:", event.error);
                     toggleVoiceInput();
                 };
 
                 recognition.onend = () => {
-                    if (micEnabled) {
-                        recognition.start(); // Restart if still enabled
-                    }
+                    if (micEnabled) recognition.start();
                 };
 
                 recognition.start();
-                console.log("Voice recognition started");
             } else {
                 micEnabled = false;
                 micBtn.textContent = "Start Voice Input";
                 statusDiv.textContent = "Voice input stopped.";
-                if (recognition) {
-                    recognition.stop();
-                }
-                console.log("Voice recognition stopped");
+                if (recognition) recognition.stop();
             }
         }
 
@@ -290,10 +312,8 @@
                 });
                 taskInput.value = "";
                 statusDiv.textContent = "Text sent! Awaiting response...";
-                console.log("Text task sent");
             } catch (error) {
                 statusDiv.textContent = `Error sending text: ${error.message}`;
-                console.error("Text send failed:", error);
             }
         }
 
@@ -304,21 +324,12 @@
                         session_id: sessionId
                     });
                 }
-
                 if (room) {
-                    if (localAudioTrack) {
-                        await room.localParticipant.unpublishTrack(localAudioTrack);
-                    }
+                    if (localAudioTrack) await room.localParticipant.unpublishTrack(localAudioTrack);
                     room.disconnect();
                 }
-
-                if (localAudioTrack) {
-                    localAudioTrack.stop();
-                }
-
-                if (recognition && micEnabled) {
-                    recognition.stop();
-                }
+                if (localAudioTrack) localAudioTrack.stop();
+                if (recognition && micEnabled) recognition.stop();
 
                 mediaElement.srcObject = null;
                 sessionId = null;
@@ -331,10 +342,8 @@
                 micBtn.textContent = "Start Voice Input";
                 micEnabled = false;
                 statusDiv.textContent = "Session closed.";
-                console.log("Session closed");
             } catch (error) {
                 statusDiv.textContent = `Error closing session: ${error.message}`;
-                console.error("Session close failed:", error);
             }
         }
 
